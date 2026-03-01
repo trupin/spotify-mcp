@@ -2,6 +2,7 @@ import logging
 import os
 from typing import Optional, Dict, List
 
+import requests
 import spotipy
 from dotenv import load_dotenv
 from spotipy.cache_handler import CacheFileHandler
@@ -14,6 +15,7 @@ load_dotenv()
 CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID")
 CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET")
 REDIRECT_URI = os.getenv("SPOTIFY_REDIRECT_URI")
+TICKETMASTER_API_KEY = os.getenv("TICKETMASTER_API_KEY")
 
 # Normalize the redirect URI to meet Spotify's requirements
 if REDIRECT_URI:
@@ -33,7 +35,7 @@ class Client:
         """Initialize Spotify client with necessary permissions"""
         self.logger = logger
 
-        scope = "user-library-read,user-read-playback-state,user-modify-playback-state,user-read-currently-playing,playlist-read-private,playlist-read-collaborative,playlist-modify-private,playlist-modify-public"
+        scope = "user-library-read,user-read-playback-state,user-modify-playback-state,user-read-currently-playing,playlist-read-private,playlist-read-collaborative,playlist-modify-private,playlist-modify-public,user-top-read,user-read-recently-played"
 
         try:
             self.sp = spotipy.Spotify(auth_manager=SpotifyOAuth(
@@ -211,6 +213,7 @@ class Client:
             return True
         return False
 
+    @utils.ensure_username
     def get_current_user_playlists(self, limit=50) -> List[Dict]:
         """
         Get current user's playlists.
@@ -315,6 +318,81 @@ class Client:
         except Exception as e:
             self.logger.error(f"Error changing playlist details: {str(e)}")
        
+    def get_concerts(self, artists: Optional[List[str]] = None, limit=20, time_range='medium_term') -> List[Dict]:
+        """
+        Get upcoming concerts for artists via Ticketmaster. If no artists provided, uses top artists from listening history.
+        - artists: List of artist names to search. If None, fetches top artists.
+        - limit: Number of top artists to fetch (only used when artists is None).
+        - time_range: Time range for top artists (only used when artists is None).
+        """
+        if not TICKETMASTER_API_KEY:
+            raise ValueError("TICKETMASTER_API_KEY environment variable is not set.")
+
+        if not artists:
+            top = self.get_top_artists(limit=limit, time_range=time_range)
+            artists = [a['name'] for a in top]
+
+        events = []
+        for artist_name in artists:
+            try:
+                resp = requests.get(
+                    "https://app.ticketmaster.com/discovery/v2/events.json",
+                    params={
+                        "apikey": TICKETMASTER_API_KEY,
+                        "keyword": artist_name,
+                        "classificationName": "music",
+                        "sort": "date,asc",
+                        "size": 5,
+                    },
+                    timeout=10,
+                )
+                if resp.status_code != 200:
+                    self.logger.error(f"Ticketmaster returned {resp.status_code} for {artist_name}")
+                    continue
+                data = resp.json()
+                for event in data.get("_embedded", {}).get("events", []):
+                    venues = event.get("_embedded", {}).get("venues", [])
+                    venue = venues[0] if venues else {}
+                    dates = event.get("dates", {}).get("start", {})
+                    events.append({
+                        "artist": artist_name,
+                        "event": event.get("name"),
+                        "date": dates.get("localDate"),
+                        "time": dates.get("localTime"),
+                        "venue": venue.get("name"),
+                        "city": venue.get("city", {}).get("name"),
+                        "country": venue.get("country", {}).get("name"),
+                        "url": event.get("url"),
+                    })
+            except Exception as e:
+                self.logger.error(f"Error fetching concerts for {artist_name}: {e}")
+                continue
+
+        events.sort(key=lambda e: e.get("date") or "")
+        return events
+
+    def get_top_artists(self, limit=20, time_range='medium_term') -> List[Dict]:
+        """
+        Get the current user's top artists.
+        - limit: Max number of artists to return.
+        - time_range: Over what time frame. Valid values: short_term, medium_term, long_term.
+        """
+        results = self.sp.current_user_top_artists(limit=limit, time_range=time_range)
+        if not results:
+            raise ValueError("No top artists found.")
+        return [utils.parse_artist(artist, detailed=True) for artist in results['items']]
+
+    def get_top_tracks(self, limit=20, time_range='medium_term') -> List[Dict]:
+        """
+        Get the current user's top tracks.
+        - limit: Max number of tracks to return.
+        - time_range: Over what time frame. Valid values: short_term, medium_term, long_term.
+        """
+        results = self.sp.current_user_top_tracks(limit=limit, time_range=time_range)
+        if not results:
+            raise ValueError("No top tracks found.")
+        return [utils.parse_track(track, detailed=True) for track in results['items']]
+
     def get_devices(self) -> dict:
         return self.sp.devices()['devices']
 

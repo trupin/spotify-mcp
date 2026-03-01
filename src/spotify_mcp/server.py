@@ -103,6 +103,28 @@ class Playlist(ToolModel):
     public: Optional[bool] = Field(default=True, description="Whether the playlist should be public (for create action).")
 
 
+class Concerts(ToolModel):
+    """Get upcoming concerts for artists. If no artists provided, automatically uses your top Spotify artists."""
+    artists: Optional[List[str]] = Field(default=None, description="List of artist names to search. If omitted, uses your top artists from listening history.")
+    limit: Optional[int] = Field(default=20, description="Number of top artists to fetch (only used when artists is omitted)")
+    time_range: Optional[str] = Field(default="medium_term",
+                                      description="Time range for top artists: 'short_term' (~4 weeks), 'medium_term' (~6 months), 'long_term' (all time)")
+
+
+class TopArtists(ToolModel):
+    """Get the current user's top artists based on listening history."""
+    limit: Optional[int] = Field(default=20, description="Maximum number of artists to return")
+    time_range: Optional[str] = Field(default="medium_term",
+                                      description="Time range: 'short_term' (~4 weeks), 'medium_term' (~6 months), 'long_term' (all time)")
+
+
+class TopTracks(ToolModel):
+    """Get the current user's top tracks based on listening history."""
+    limit: Optional[int] = Field(default=20, description="Maximum number of tracks to return")
+    time_range: Optional[str] = Field(default="medium_term",
+                                      description="Time range: 'short_term' (~4 weeks), 'medium_term' (~6 months), 'long_term' (all time)")
+
+
 @server.list_prompts()
 async def handle_list_prompts() -> list[types.Prompt]:
     return []
@@ -124,6 +146,9 @@ async def handle_list_tools() -> list[types.Tool]:
         Queue.as_tool(),
         GetInfo.as_tool(),
         Playlist.as_tool(),
+        TopArtists.as_tool(),
+        TopTracks.as_tool(),
+        Concerts.as_tool(),
     ]
     logger.info(f"Available tools: {[tool.name for tool in tools]}")
     return tools
@@ -352,6 +377,40 @@ async def handle_call_tool(
                             text=f"Unknown playlist action: {action}."
                                  "Supported actions are: get, get_tracks, add_tracks, remove_tracks, change_details, create."
                         )]
+            case "Concerts":
+                logger.info(f"Getting concerts with arguments: {arguments}")
+                concerts = spotify_client.get_concerts(
+                    artists=arguments.get("artists"),
+                    limit=arguments.get("limit", 20),
+                    time_range=arguments.get("time_range", "medium_term")
+                )
+                return [types.TextContent(
+                    type="text",
+                    text=json.dumps(concerts, indent=2)
+                )]
+
+            case "TopArtists":
+                logger.info(f"Getting top artists with arguments: {arguments}")
+                top_artists = spotify_client.get_top_artists(
+                    limit=arguments.get("limit", 20),
+                    time_range=arguments.get("time_range", "medium_term")
+                )
+                return [types.TextContent(
+                    type="text",
+                    text=json.dumps(top_artists, indent=2)
+                )]
+
+            case "TopTracks":
+                logger.info(f"Getting top tracks with arguments: {arguments}")
+                top_tracks = spotify_client.get_top_tracks(
+                    limit=arguments.get("limit", 20),
+                    time_range=arguments.get("time_range", "medium_term")
+                )
+                return [types.TextContent(
+                    type="text",
+                    text=json.dumps(top_tracks, indent=2)
+                )]
+
             case _:
                 error_msg = f"Unknown tool: {name}"
                 logger.error(error_msg)

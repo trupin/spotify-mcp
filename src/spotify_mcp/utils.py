@@ -77,12 +77,12 @@ def parse_playlist(playlist_item: dict, username, detailed=False) -> Optional[di
         'id': playlist_item['id'],
         'owner': playlist_item['owner']['display_name'],
         'user_is_owner': playlist_item['owner']['display_name'] == username,
-        'total_tracks': playlist_item['tracks']['total'],
+        'total_tracks': playlist_item.get('tracks', {}).get('total', 0),
     }
     if detailed:
         narrowed_item['description'] = playlist_item.get('description')
         tracks = []
-        for t in playlist_item['tracks']['items']:
+        for t in playlist_item.get('tracks', {}).get('items', []):
             tracks.append(parse_track(t['track']))
         narrowed_item['tracks'] = tracks
 
